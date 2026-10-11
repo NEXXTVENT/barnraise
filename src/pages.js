@@ -131,6 +131,9 @@ export function connectedPage({ login, token, publicUrl }) {
 <h2>Claude Code</h2>
 <pre>claude mcp add --transport http barnraise ${esc(url)} --header "Authorization: Bearer ${esc(token)}"</pre>
 <p>Then open Claude Code in an empty folder and say: <code>do a Barnraise task</code></p>
+<h2>Claude desktop app, or no command line</h2>
+<p>Make an empty folder, save this in it as a file named <code>.mcp.json</code>, and open that folder in your agent:</p>
+<pre>${esc(JSON.stringify({ mcpServers: { barnraise: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2))}</pre>
 <h2>Any other agent that supports MCP</h2>
 <p>Add a remote (HTTP) MCP server with these values:</p>
 <pre>URL:    ${esc(url)}
