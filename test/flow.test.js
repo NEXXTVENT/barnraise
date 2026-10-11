@@ -258,3 +258,47 @@ test('declining a proposal drops its pledges', async () => {
   assert.equal(coordinator.hasBacked('alice', p.id), false);
   await assert.rejects(coordinator.back('alice', p.id), /not open for backing/);
 });
+
+const opened = (number, login, { body = '', branch = 'patch-1' } = {}) => ({
+  action: 'opened',
+  repository: { full_name: REPO },
+  pull_request: { number, html_url: `https://github.com/${REPO}/pull/${number}`, user: { login }, body, head: { ref: branch } },
+});
+
+test('an opened pull request is recorded without the volunteer reporting it', async () => {
+  const { coordinator, github } = setup();
+  await handleWebhook(coordinator, github, 'issues', labeled(1));
+  const task = coordinator.claim('alice');
+  await assert.rejects(coordinator.submit('alice', task.id), /No pull request has been seen/);
+
+  await handleWebhook(coordinator, github, 'pull_request', opened(40, 'mallory', { body: `Barnraise task #${task.id}.` }));
+  await handleWebhook(coordinator, github, 'pull_request', opened(41, 'alice', { body: 'Unrelated work' }));
+  await handleWebhook(coordinator, github, 'pull_request', opened(42, 'alice', { body: `Barnraise task #${task.id}0.` }));
+  assert.equal(coordinator.task(task.id).status, 'claimed', 'only the holder\'s pull request for this task counts');
+
+  await handleWebhook(coordinator, github, 'pull_request', opened(43, 'Alice', { body: `Closes #1\n\nBarnraise task #${task.id}. Written with AI assistance.` }));
+  const recorded = coordinator.task(task.id);
+  assert.equal(recorded.status, 'submitted');
+  assert.equal(recorded.pr_number, 43);
+  assert.equal((await coordinator.submit('alice', task.id)).pr_number, 43, 'confirming afterwards needs no URL');
+  assert.equal(coordinator.claim('bob').kind, 'review');
+});
+
+test('the branch name alone is enough to match a pull request', async () => {
+  const { coordinator, github } = setup();
+  await handleWebhook(coordinator, github, 'issues', labeled(7, 'Fix the Thing!'));
+  const task = coordinator.claim('alice');
+  await handleWebhook(coordinator, github, 'pull_request', opened(50, 'alice', { branch: 'barnraise/7-fix-the-thing' }));
+  assert.equal(coordinator.task(task.id).status, 'submitted');
+});
+
+test('task steps include a prefilled pull request link', async () => {
+  const { describeTask } = await import('../src/mcp.js');
+  const { coordinator, github } = setup();
+  await handleWebhook(coordinator, github, 'issues', labeled(7, 'Fix the Thing!'));
+  const steps = describeTask(coordinator.claim('alice'), coordinator.project(REPO), 'alice');
+  const link = new URL(/https:\/\/github\.com\/\S+quick_pull=1\S*/.exec(steps)[0]);
+  assert.equal(link.pathname, `/${REPO}/compare/alice:barnraise/7-fix-the-thing`);
+  assert.equal(link.searchParams.get('title'), 'Fix the Thing!');
+  assert.match(link.searchParams.get('body'), /^Closes #7\n\nBarnraise task #1\. Written with AI assistance and checked by @alice\.$/);
+});

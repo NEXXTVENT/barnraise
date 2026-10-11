@@ -175,8 +175,14 @@ export class Coordinator {
   }
 
   async submit(login, taskId, prUrl) {
+    const current = this.task(taskId);
+    // Usually the pull request has already been recorded from GitHub's own notification.
+    if (current?.status === 'submitted' && sameLogin(current.author, login)) return current;
     const task = this.heldBy(login, taskId);
     if (task.kind !== 'build') throw new TaskError('This is a review task. Use submit_review.');
+    if (!prUrl) {
+      throw new TaskError('No pull request has been seen for this task yet. Once it is open, call submit_task again with its URL.');
+    }
     const pr = parsePrUrl(prUrl);
     if (!sameLogin(pr.repo, task.repo)) {
       throw new TaskError(`The pull request must be opened against ${task.repo}, not ${pr.repo}.`);
@@ -189,29 +195,37 @@ export class Coordinator {
     if (!sameLogin(pull.user?.login, login)) {
       throw new TaskError(`Pull request #${pr.number} was opened by ${pull.user?.login}, but you are signed in as ${login}.`);
     }
+    return this.recordSubmission(task, login, pr.number, pull.html_url ?? prUrl);
+  }
+
+  recordSubmission(task, login, number, url) {
     this.db
       .prepare(
         `UPDATE tasks SET status = 'submitted', pr_number = ?, pr_url = ?, author = ?, claimed_by = NULL, lease_expires = NULL
          WHERE id = ?`
       )
-      .run(pr.number, pull.html_url ?? prUrl, login, taskId);
+      .run(number, url, login, task.id);
     this.db
       .prepare(
         `INSERT INTO tasks (repo, kind, issue_number, title, body, pr_number, pr_url, author, parent_id, created_at)
          VALUES (?, 'review', ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
-        task.repo,
-        task.issue_number,
-        `Review pull request #${pr.number}: ${task.title}`,
-        task.body,
-        pr.number,
-        pull.html_url ?? prUrl,
-        login,
-        taskId,
-        this.now()
-      );
-    return this.task(taskId);
+      .run(task.repo, task.issue_number, `Review pull request #${number}: ${task.title}`, task.body, number, url, login, task.id, this.now());
+    return this.task(task.id);
+  }
+
+  // A pull request was opened on a project. If its author holds a task there and the
+  // pull request names it, record it so the volunteer does not have to report it.
+  onPullOpened(repo, { number, url, author, body, branch }) {
+    this.expireLeases();
+    const held = this.db
+      .prepare(`SELECT * FROM tasks WHERE repo = ? AND kind = 'build' AND status = 'claimed'`)
+      .all(repo)
+      .filter((t) => sameLogin(t.claimed_by, author));
+    const task = held.find(
+      (t) => new RegExp(`Barnraise task #${t.id}\\b`).test(body ?? '') || String(branch).startsWith(`barnraise/${t.issue_number}-`)
+    );
+    return task ? this.recordSubmission(task, task.claimed_by, number, url) : null;
   }
 
   async submitReview(login, taskId, verdict, notes) {

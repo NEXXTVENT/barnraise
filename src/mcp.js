@@ -20,6 +20,10 @@ const untrusted = (label, text) =>
 
 export function describeTask(task, project, login) {
   const repoUrl = `https://github.com/${task.repo}`;
+  const branch = `barnraise/${task.issue_number}-${slug(task.title)}`;
+  const prBody = `Closes #${task.issue_number}\n\nBarnraise task #${task.id}. Written with AI assistance and checked by @${login}.`;
+  // Opens GitHub's "new pull request" page with everything filled in, so the user only clicks Create.
+  const prLink = `${repoUrl}/compare/${login}:${branch}?${new URLSearchParams({ quick_pull: '1', title: task.title, body: prBody })}`;
   if (task.kind === 'review') {
     return [
       `Review task #${task.id} for ${task.repo}: pull request #${task.pr_number} by @${task.author}`,
@@ -41,12 +45,13 @@ export function describeTask(task, project, login) {
     '',
     'What to do',
     `1. Fork ${repoUrl} under the user's GitHub account (or reuse their fork) and clone it into a fresh folder. If the user can push to ${task.repo} itself, skip the fork and clone it directly. If git has no user.name or user.email, ask the user once and set them for this clone only.`,
-    `2. Create a branch named barnraise/${task.issue_number}-${slug(task.title)}.`,
+    `2. Create a branch named exactly ${branch}.`,
     "3. Make the smallest change that resolves the issue. Follow the repository's CONTRIBUTING file and existing style.",
     `4. Run the project's tests and make sure they pass.${project?.test_command ? ` Maintainer's test command: ${project.test_command}` : ''}`,
     '5. Show the user a summary of the change and get their OK before pushing. The pull request goes out under their name.',
-    `6. Open a pull request against ${task.repo} from the user's account. Its description must include "Closes #${task.issue_number}" and the line "Barnraise task #${task.id}. Written with AI assistance and checked by @${login}." Without the GitHub CLI, push the branch and give the user the link ${repoUrl}/compare/<base>...<owner>:<branch>?expand=1 plus the description to paste, then ask them for the pull request URL.`,
-    `7. Call submit_task with task_id ${task.id} and the pull request URL.`,
+    `6. Push the branch, then open the pull request from the user's account. With the GitHub CLI: gh pr create --repo ${task.repo} with the title "${task.title}" and the description below. Without it, give the user this link, which opens the pull request page already filled in, and ask them to click "Create pull request" once: ${prLink} (if the branch was pushed to ${task.repo} itself by someone other than its owner, use the repository owner's name before the colon).`,
+    `   Description (keep both lines; a short summary above them is welcome): "Closes #${task.issue_number}" and "Barnraise task #${task.id}. Written with AI assistance and checked by @${login}."`,
+    `7. When the pull request is open, call submit_task with task_id ${task.id}. Barnraise normally sees the pull request by itself; if it says it has not, call submit_task again with the pull request URL.`,
     'If you cannot finish, call release_task so someone else can pick it up. The task is held for you for 2 hours.',
     ...(project?.notes ? ['', `Maintainer notes: ${project.notes}`] : []),
     '',
@@ -102,8 +107,9 @@ export function buildMcpServer(coordinator, login) {
   server.registerTool(
     'submit_task',
     {
-      description: 'Report the pull request you opened for a build task you hold.',
-      inputSchema: { task_id: z.number().int(), pr_url: z.string() },
+      description:
+        'Confirm the pull request for a build task you hold. The URL is only needed if Barnraise has not already seen the pull request.',
+      inputSchema: { task_id: z.number().int(), pr_url: z.string().optional() },
     },
     guarded(async ({ task_id, pr_url }) => {
       const task = await coordinator.submit(login, task_id, pr_url);

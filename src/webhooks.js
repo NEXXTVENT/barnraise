@@ -66,7 +66,18 @@ export async function handleWebhook(coordinator, github, event, payload, publicU
     return;
   }
 
-  if (event === 'pull_request' && repo && payload.action === 'closed') {
-    coordinator.onPullClosed(repo, payload.pull_request.number, Boolean(payload.pull_request.merged));
+  if (event === 'pull_request' && repo) {
+    const pull = payload.pull_request;
+    if (payload.action === 'closed') {
+      coordinator.onPullClosed(repo, pull.number, Boolean(pull.merged));
+    } else if (['opened', 'reopened'].includes(payload.action)) {
+      coordinator.onPullOpened(repo, {
+        number: pull.number,
+        url: pull.html_url,
+        author: pull.user?.login,
+        body: pull.body,
+        branch: pull.head?.ref,
+      });
+    }
   }
 }
