@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 export const LABEL = 'barnraise';
 export const PROPOSAL_LABEL = 'barnraise-proposal';
 export const PLAN_LABEL = 'barnraise-plan';
+export const FIRST_LABEL = 'good first issue';
 const LEASE_MS = 2 * 60 * 60 * 1000;
 // How long the volunteers who backed a proposal get first claim on its task.
 const BACKER_PRIORITY_MS = 48 * 60 * 60 * 1000;
@@ -10,6 +11,8 @@ const BACKER_PRIORITY_MS = 48 * 60 * 60 * 1000;
 export class TaskError extends Error {}
 
 const hashToken = (token) => createHash('sha256').update(token).digest('hex');
+// A volunteer is a newcomer until their first pull request is merged.
+export const tierOf = (merged) => (merged > 0 ? 'regular' : 'newcomer');
 const sameLogin = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 // Volunteer-written text is posted on GitHub by the app; this stops it from pinging people.
 const noMentions = (text) => String(text).replace(/@/g, '@​');
@@ -47,6 +50,10 @@ export class Coordinator {
     return this.db.prepare('SELECT * FROM users WHERE token_hash = ?').get(hashToken(token)) ?? null;
   }
 
+  tier(login) {
+    return tierOf(this.db.prepare('SELECT merged FROM users WHERE login = ?').get(login)?.merged ?? 0);
+  }
+
   // ---- projects ----
 
   upsertProject(repo, installationId, config = {}) {
@@ -80,17 +87,19 @@ export class Coordinator {
 
   // ---- tasks from issues ----
 
-  openIssueTask({ repo, number, title, body }) {
+  openIssueTask({ repo, number, title, body, goodFirst = false }) {
     const existing = this.db
       .prepare(`SELECT * FROM tasks WHERE repo = ? AND issue_number = ? AND kind = 'build' AND status != 'closed'`)
       .get(repo, number);
     if (existing) {
-      this.db.prepare('UPDATE tasks SET title = ?, body = ? WHERE id = ?').run(title, body ?? '', existing.id);
+      this.db
+        .prepare('UPDATE tasks SET title = ?, body = ?, good_first = ? WHERE id = ?')
+        .run(title, body ?? '', goodFirst ? 1 : 0, existing.id);
       return { task: this.task(existing.id), created: false };
     }
     const { lastInsertRowid } = this.db
-      .prepare(`INSERT INTO tasks (repo, kind, issue_number, title, body, created_at) VALUES (?, 'build', ?, ?, ?, ?)`)
-      .run(repo, number, title, body ?? '', this.now());
+      .prepare(`INSERT INTO tasks (repo, kind, issue_number, title, body, good_first, created_at) VALUES (?, 'build', ?, ?, ?, ?, ?)`)
+      .run(repo, number, title, body ?? '', goodFirst ? 1 : 0, this.now());
     return { task: this.task(Number(lastInsertRowid)), created: true };
   }
 
@@ -127,11 +136,14 @@ export class Coordinator {
   claimable(login, { repo, kind } = {}) {
     this.expireLeases();
     const rows = this.db.prepare(`SELECT * FROM tasks WHERE status = 'open' ORDER BY kind = 'review' DESC, kind = 'plan' DESC, id`).all();
+    const newcomer = this.tier(login) === 'newcomer';
     return rows.filter((t) => {
       if (repo && !sameLogin(t.repo, repo)) return false;
       if (kind && t.kind !== kind) return false;
       if (t.kind === 'review') return !sameLogin(t.author, login);
       if (t.kind === 'plan') return true;
+      // Newcomers start on easy work: only build tasks the maintainers marked as a good first issue.
+      if (newcomer && !t.good_first) return false;
       const backersOnly = t.proposal_id && this.now() < t.created_at + BACKER_PRIORITY_MS;
       if (backersOnly && !this.hasBacked(login, t.proposal_id)) return false;
       const project = this.project(t.repo);
@@ -151,10 +163,14 @@ export class Coordinator {
     const candidates = this.claimable(login, { repo, kind });
     const chosen = taskId ? candidates.find((t) => t.id === taskId) : candidates[0];
     if (!chosen) {
+      const hint =
+        this.tier(login) === 'newcomer'
+          ? ` Until your first pull request is merged you can only take build tasks whose issue is labelled "${FIRST_LABEL}".`
+          : '';
       throw new TaskError(
-        taskId
+        (taskId
           ? `Task #${taskId} is not available (already taken, finished, or its project is at its pull request limit).`
-          : 'No tasks are available right now. Try again later.'
+          : 'No tasks are available right now. Try again later.') + hint
       );
     }
     this.db
@@ -461,7 +477,8 @@ export class Coordinator {
           `SELECT login, merged, reviews, plans FROM users WHERE merged + reviews + plans > 0
            ORDER BY merged DESC, reviews DESC, plans DESC, login LIMIT 50`
         )
-        .all(),
+        .all()
+        .map((u) => ({ ...u, tier: tierOf(u.merged) })),
       merged: this.db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE status = 'merged'`).get().n,
     };
   }

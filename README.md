@@ -19,7 +19,7 @@ npm run dev
 Open http://localhost:8787. In dev mode you can sign in with any username on the Volunteer page, and unsigned webhooks are accepted so you can simulate a labelled issue:
 
 ```bash
-curl -X POST http://localhost:8787/webhook -H "x-github-event: issues" -H "content-type: application/json" -d '{"action":"labeled","label":{"name":"barnraise"},"repository":{"full_name":"you/your-repo"},"issue":{"number":1,"title":"Fix the typo in the README","body":"teh -> the","state":"open","labels":[{"name":"barnraise"}]}}'
+curl -X POST http://localhost:8787/webhook -H "x-github-event: issues" -H "content-type: application/json" -d '{"action":"labeled","label":{"name":"barnraise"},"repository":{"full_name":"you/your-repo"},"issue":{"number":1,"title":"Fix the typo in the README","body":"teh -> the","state":"open","labels":[{"name":"barnraise"},{"name":"good first issue"}]}}'
 ```
 
 Run the tests with `npm test`.
@@ -63,9 +63,12 @@ Maintainers put the `barnraise-proposal` label on a feature idea. Volunteers vot
 
 Maintainers put the `barnraise-plan` label on an issue that is too big for one pull request. A volunteer's agent claims it as a planning task, reads the code, and submits 2 to 10 small tasks, which Barnraise posts on the issue. Adding the `barnraise` label approves the plan and creates one labelled issue per task; removing `barnraise-plan` discards it. The server still runs no model: planning is donated work like everything else.
 
+## Reputation tiers
+
+A volunteer with no merged pull requests is a newcomer and can only claim build tasks whose issue also has the `good first issue` label. After one merged pull request they are a regular and can claim any task. Review and planning tasks are open to everyone. The home page board shows each volunteer's tier.
+
 ## Not built yet
 
 - Counting a volunteer's backing for less if they pledge and then never take the work
 
-- Reputation tiers (new volunteers start on issues also labelled `good first issue`)
 - Checking CI status before a review task is handed out

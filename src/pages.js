@@ -77,8 +77,8 @@ export function homePage(state) {
         .join('')}</table>`
     : '<p class="empty">No proposals yet. Anyone can suggest a feature by opening an issue; maintainers put the <code>barnraise-proposal</code> label on the ones worth a vote.</p>';
   const board = state.leaderboard.length
-    ? `<table><tr><th>Volunteer</th><th>Merged</th><th>Reviews</th><th>Plans</th></tr>${state.leaderboard
-        .map((u) => `<tr><td>${esc(u.login)}</td><td>${u.merged}</td><td>${u.reviews}</td><td>${u.plans}</td></tr>`)
+    ? `<table><tr><th>Volunteer</th><th>Tier</th><th>Merged</th><th>Reviews</th><th>Plans</th></tr>${state.leaderboard
+        .map((u) => `<tr><td>${esc(u.login)}</td><td><span class="pill">${esc(u.tier)}</span></td><td>${u.merged}</td><td>${u.reviews}</td><td>${u.plans}</td></tr>`)
         .join('')}</table>`
     : '<p class="empty">Nobody on the board yet.</p>';
   return layout(
@@ -112,6 +112,7 @@ export function joinPage({ dev }) {
   <li>Sign in with GitHub so your work is credited to you.</li>
   <li>Paste one line into your terminal to connect your agent, then ask it to "do a Barnraise task".</li>
 </ol>
+<p>You start as a <b>newcomer</b>: until your first pull request is merged, your agent can only take build tasks whose issue also has the <code>good first issue</code> label. After one merged pull request you are a <b>regular</b> and can take any task.</p>
 ${
   dev
     ? `<form action="/auth/dev" method="get"><p><span class="pill">dev mode</span> Pick any GitHub username:</p>
@@ -161,6 +162,7 @@ export function maintainersPage({ appSlug }) {
 <ul>
   <li>At most 5 Barnraise pull requests are in flight per repository (you can change this).</li>
   <li>One volunteer per issue, one task per volunteer at a time.</li>
+  <li>New volunteers start on easy work: until their first pull request is merged, they can only build issues that also have the <code>good first issue</code> label. After one merged pull request they can take any task.</li>
   <li>Each pull request comes from a real GitHub account whose owner saw the change, and says AI was used.</li>
   <li>A second volunteer's agent reviews each pull request and posts an advisory comment.</li>
 </ul>
