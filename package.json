@@ -1,0 +1,19 @@
+{
+  "name": "barnraise",
+  "version": "0.1.0",
+  "description": "Many people's coding agents, one open-source project. A coordinator that hands out maintainer-approved tasks to volunteers' own agents.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js --dev",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.6"
+  }
+}
