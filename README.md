@@ -32,6 +32,8 @@ Run the tests with `npm test`.
 
 Settings: `PORT` (default 8787), `PUBLIC_URL`, `BARNRAISE_DATA` (default `./data`).
 
+On Railway: deploy this repository (it builds from the `Dockerfile`), attach a volume, and generate a domain. The server picks up the address and the volume path from Railway's own variables, so there is nothing to configure. Attach the volume before running setup, because the GitHub App keys are stored on it.
+
 ## How the pieces fit
 
 | File | Job |

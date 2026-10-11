@@ -182,8 +182,12 @@ export function createApp({ dataDir = null, dev = false, publicUrl = 'http://loc
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const dev = process.argv.includes('--dev');
   const port = Number(process.env.PORT ?? 8787);
-  const publicUrl = (process.env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, '');
-  const dataDir = resolve(process.env.BARNRAISE_DATA ?? fileURLToPath(new URL('../data', import.meta.url)));
+  // On Railway the public address and the volume path are provided by the platform.
+  const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN && `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  const publicUrl = (process.env.PUBLIC_URL ?? railwayUrl ?? `http://localhost:${port}`).replace(/\/$/, '');
+  const dataDir = resolve(
+    process.env.BARNRAISE_DATA ?? process.env.RAILWAY_VOLUME_MOUNT_PATH ?? fileURLToPath(new URL('../data', import.meta.url))
+  );
   const { server, setupKey, hasApp } = createApp({ dataDir, dev, publicUrl });
   server.listen(port, () => {
     console.log(`Barnraise is running at ${publicUrl}${dev ? ' (dev mode)' : ''}`);
