@@ -71,6 +71,19 @@ export function makeGithub({ appId, privateKey, fetchImpl = fetch } = {}) {
       if (!res.ok) console.error(`[barnraise] comment on ${repo}#${number} failed: ${res.status}`);
     },
 
+    async createIssue(repo, installationId, { title, body, labels }) {
+      if (!(appId && privateKey && installationId)) {
+        console.log(`[barnraise] (no GitHub App configured) would create an issue on ${repo}: ${title}`);
+        return null;
+      }
+      const res = await request(installationId, 'POST', `/repos/${repo}/issues`, { body: { title, body, labels } });
+      if (!res.ok) {
+        console.error(`[barnraise] creating an issue on ${repo} failed: ${res.status}`);
+        return null;
+      }
+      return res.json();
+    },
+
     async getConfig(repo, installationId) {
       const res = await request(installationId, 'GET', `/repos/${repo}/contents/.github/barnraise.yml`, {
         accept: 'application/vnd.github.raw+json',

@@ -24,6 +24,22 @@ export function describeTask(task, project, login) {
   const prBody = `Closes #${task.issue_number}\n\nBarnraise task #${task.id}. Written with AI assistance and checked by @${login}.`;
   // Opens GitHub's "new pull request" page with everything filled in, so the user only clicks Create.
   const prLink = `${repoUrl}/compare/${login}:${branch}?${new URLSearchParams({ quick_pull: '1', title: task.title, body: prBody })}`;
+  if (task.kind === 'plan') {
+    return [
+      `Planning task #${task.id} for ${task.repo}: split issue #${task.issue_number}, "${task.title}", into small tasks`,
+      `${repoUrl}/issues/${task.issue_number}`,
+      '',
+      'What to do',
+      `1. Clone ${repoUrl} into a fresh folder and read the code this issue touches. Do not change anything.`,
+      '2. Split the issue into 2 to 10 small tasks. Each one must fit in a single pull request, leave the tests passing, and not need another task merged first unless its description says so.',
+      '3. For each task write a short title, a description that names the files or areas involved, and a "done when" check a reviewer can verify.',
+      `4. Show the plan to the user, then call submit_plan with task_id ${task.id} and the list.`,
+      'The plan is posted on the issue. The maintainers decide whether to turn it into tasks.',
+      ...(project?.notes ? ['', `Maintainer notes: ${project.notes}`] : []),
+      '',
+      untrusted('Issue text', task.body),
+    ].join('\n');
+  }
   if (task.kind === 'review') {
     return [
       `Review task #${task.id} for ${task.repo}: pull request #${task.pr_number} by @${task.author}`,
@@ -95,7 +111,7 @@ export function buildMcpServer(coordinator, login) {
       inputSchema: {
         task_id: z.number().int().optional(),
         repo: z.string().optional(),
-        kind: z.enum(['build', 'review']).optional(),
+        kind: z.enum(['build', 'review', 'plan']).optional(),
       },
     },
     guarded(({ task_id, repo, kind }) => {
@@ -130,6 +146,30 @@ export function buildMcpServer(coordinator, login) {
     guarded(async ({ task_id, verdict, notes }) => {
       await coordinator.submitReview(login, task_id, verdict, notes);
       return `Review recorded for task #${task_id}. Thank you.`;
+    })
+  );
+
+  server.registerTool(
+    'submit_plan',
+    {
+      description: 'Submit the list of small tasks for a planning task you hold. It is posted on the issue for the maintainers to approve.',
+      inputSchema: {
+        task_id: z.number().int(),
+        subtasks: z
+          .array(
+            z.object({
+              title: z.string().min(5).max(120),
+              description: z.string().min(20).max(2000),
+              done_when: z.string().min(10).max(500),
+            })
+          )
+          .min(2)
+          .max(10),
+      },
+    },
+    guarded(async ({ task_id, subtasks }) => {
+      await coordinator.submitPlan(login, task_id, subtasks);
+      return `Plan with ${subtasks.length} tasks posted for task #${task_id}. The maintainers decide whether to create them.`;
     })
   );
 

@@ -40,7 +40,7 @@ On Railway: deploy this repository (it builds from the `Dockerfile`), attach a v
 | --- | --- |
 | `src/coordinator.js` | Tasks, claims, leases, the per-repo cap, credit |
 | `src/webhooks.js` | Turns GitHub events (labels, merged pull requests) into task changes |
-| `src/mcp.js` | The tools a volunteer's agent calls: `claim_task`, `submit_task`, `submit_review`, ... |
+| `src/mcp.js` | The tools a volunteer's agent calls: `claim_task`, `submit_task`, `submit_review`, `submit_plan`, ... |
 | `src/github.js` | GitHub App authentication, comments, reading `.github/barnraise.yml` |
 | `src/server.js` | HTTP routes, sign-in, one-click app setup |
 | `src/pages.js` | The web pages |
@@ -59,10 +59,13 @@ This is a reading of the published terms, not legal advice and not a guarantee. 
 
 Maintainers put the `barnraise-proposal` label on a feature idea. Volunteers vote by pledging their agent to it ("back Barnraise proposal #3"), one proposal at a time. When enough have pledged (3 by default, `proposal_threshold` in `.github/barnraise.yml`), the maintainers get a comment on the issue. Adding the `barnraise` label approves it and gives the backers first claim on the work for 48 hours; removing the proposal label declines it.
 
+## Splitting big issues
+
+Maintainers put the `barnraise-plan` label on an issue that is too big for one pull request. A volunteer's agent claims it as a planning task, reads the code, and submits 2 to 10 small tasks, which Barnraise posts on the issue. Adding the `barnraise` label approves the plan and creates one labelled issue per task; removing `barnraise-plan` discards it. The server still runs no model: planning is donated work like everything else.
+
 ## Not built yet
 
 - Counting a volunteer's backing for less if they pledge and then never take the work
 
-- Splitting a large goal into tasks (a "plan" task that a volunteer's agent turns into proposed sub-issues for the maintainer to approve)
 - Reputation tiers (new volunteers start on issues also labelled `good first issue`)
 - Checking CI status before a review task is handed out

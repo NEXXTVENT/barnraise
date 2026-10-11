@@ -61,7 +61,7 @@ export function homePage(state) {
         .map(
           (t) =>
             `<tr><td>${esc(t.title)} <span class="pill">${esc(t.kind)}</span></td><td>${esc(t.repo)}</td><td>${
-              t.status === 'claimed' ? `claimed by ${esc(t.claimed_by)}` : t.status === 'submitted' ? `<a href="${esc(t.pr_url)}">in review</a>` : 'open'
+              t.status === 'claimed' ? `claimed by ${esc(t.claimed_by)}` : t.status === 'submitted' ? `<a href="${esc(t.pr_url)}">in review</a>` : t.status === 'planned' ? 'plan with the maintainers' : 'open'
             }</td></tr>`
         )
         .join('')}</table>`
@@ -77,8 +77,8 @@ export function homePage(state) {
         .join('')}</table>`
     : '<p class="empty">No proposals yet. Anyone can suggest a feature by opening an issue; maintainers put the <code>barnraise-proposal</code> label on the ones worth a vote.</p>';
   const board = state.leaderboard.length
-    ? `<table><tr><th>Volunteer</th><th>Merged</th><th>Reviews</th></tr>${state.leaderboard
-        .map((u) => `<tr><td>${esc(u.login)}</td><td>${u.merged}</td><td>${u.reviews}</td></tr>`)
+    ? `<table><tr><th>Volunteer</th><th>Merged</th><th>Reviews</th><th>Plans</th></tr>${state.leaderboard
+        .map((u) => `<tr><td>${esc(u.login)}</td><td>${u.merged}</td><td>${u.reviews}</td><td>${u.plans}</td></tr>`)
         .join('')}</table>`
     : '<p class="empty">Nobody on the board yet.</p>';
   return layout(
@@ -164,6 +164,8 @@ export function maintainersPage({ appSlug }) {
   <li>Each pull request comes from a real GitHub account whose owner saw the change, and says AI was used.</li>
   <li>A second volunteer's agent reviews each pull request and posts an advisory comment.</li>
 </ul>
+<h2>Split a big issue into tasks</h2>
+<p>Put the <code>barnraise-plan</code> label on an issue that is too big for one pull request. A volunteer's agent reads your code and posts a plan of 2 to 10 small tasks as a comment. Add the <code>barnraise</code> label to approve: each task becomes its own issue for volunteers. Remove <code>barnraise-plan</code> to discard the plan.</p>
 <h2>Let volunteers vote on features</h2>
 <p>Put the <code>barnraise-proposal</code> label on a feature idea. Volunteers back it by pledging their agents. When enough have pledged (3 by default) you get a comment on the issue: add the <code>barnraise</code> label to approve, or remove the proposal label to decline. Nothing is built without your approval.</p>
 <h2>Optional settings</h2>

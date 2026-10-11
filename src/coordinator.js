@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 export const LABEL = 'barnraise';
 export const PROPOSAL_LABEL = 'barnraise-proposal';
+export const PLAN_LABEL = 'barnraise-plan';
 const LEASE_MS = 2 * 60 * 60 * 1000;
 // How long the volunteers who backed a proposal get first claim on its task.
 const BACKER_PRIORITY_MS = 48 * 60 * 60 * 1000;
@@ -10,6 +11,8 @@ export class TaskError extends Error {}
 
 const hashToken = (token) => createHash('sha256').update(token).digest('hex');
 const sameLogin = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+// Volunteer-written text is posted on GitHub by the app; this stops it from pinging people.
+const noMentions = (text) => String(text).replace(/@/g, '@​');
 
 export function parsePrUrl(url) {
   const m = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)\/?$/.exec(String(url).trim());
@@ -66,7 +69,7 @@ export class Coordinator {
   }
 
   removeProject(repo) {
-    this.db.prepare(`UPDATE tasks SET status = 'closed' WHERE repo = ? AND status IN ('open', 'claimed')`).run(repo);
+    this.db.prepare(`UPDATE tasks SET status = 'closed' WHERE repo = ? AND status IN ('open', 'claimed', 'planned')`).run(repo);
     for (const p of this.proposals({ repo })) this.closeProposal(repo, p.issue_number);
     this.db.prepare('DELETE FROM projects WHERE repo = ?').run(repo);
   }
@@ -123,11 +126,12 @@ export class Coordinator {
 
   claimable(login, { repo, kind } = {}) {
     this.expireLeases();
-    const rows = this.db.prepare(`SELECT * FROM tasks WHERE status = 'open' ORDER BY kind = 'review' DESC, id`).all();
+    const rows = this.db.prepare(`SELECT * FROM tasks WHERE status = 'open' ORDER BY kind = 'review' DESC, kind = 'plan' DESC, id`).all();
     return rows.filter((t) => {
       if (repo && !sameLogin(t.repo, repo)) return false;
       if (kind && t.kind !== kind) return false;
       if (t.kind === 'review') return !sameLogin(t.author, login);
+      if (t.kind === 'plan') return true;
       const backersOnly = t.proposal_id && this.now() < t.created_at + BACKER_PRIORITY_MS;
       if (backersOnly && !this.hasBacked(login, t.proposal_id)) return false;
       const project = this.project(t.repo);
@@ -179,7 +183,7 @@ export class Coordinator {
     // Usually the pull request has already been recorded from GitHub's own notification.
     if (current?.status === 'submitted' && sameLogin(current.author, login)) return current;
     const task = this.heldBy(login, taskId);
-    if (task.kind !== 'build') throw new TaskError('This is a review task. Use submit_review.');
+    if (task.kind !== 'build') throw new TaskError('Task #' + taskId + ' is not a build task, so it does not take a pull request.');
     if (!prUrl) {
       throw new TaskError('No pull request has been seen for this task yet. Once it is open, call submit_task again with its URL.');
     }
@@ -241,7 +245,7 @@ export class Coordinator {
       task.repo,
       project?.installation_id,
       task.pr_number,
-      `**Barnraise volunteer review: ${heading}**\n\n${notes}\n\n` +
+      `**Barnraise volunteer review: ${heading}**\n\n${noMentions(notes)}\n\n` +
         `_Advisory review from @${login}'s agent. The maintainers decide what gets merged._`
     );
     return this.task(taskId);
@@ -268,6 +272,87 @@ export class Coordinator {
       )
       .run(task.id);
     return this.task(task.id);
+  }
+
+  // ---- plans: a volunteer's agent splits a big issue into small tasks ----
+
+  planTask(repo, number) {
+    return (
+      this.db
+        .prepare(`SELECT * FROM tasks WHERE repo = ? AND issue_number = ? AND kind = 'plan' AND status != 'closed' ORDER BY id DESC`)
+        .get(repo, number) ?? null
+    );
+  }
+
+  openPlanTask({ repo, number, title, body }) {
+    const existing = this.planTask(repo, number);
+    if (existing) {
+      this.db.prepare('UPDATE tasks SET title = ?, body = ? WHERE id = ?').run(title, body ?? '', existing.id);
+      return { task: this.task(existing.id), created: false };
+    }
+    const { lastInsertRowid } = this.db
+      .prepare(`INSERT INTO tasks (repo, kind, issue_number, title, body, created_at) VALUES (?, 'plan', ?, ?, ?, ?)`)
+      .run(repo, number, title, body ?? '', this.now());
+    return { task: this.task(Number(lastInsertRowid)), created: true };
+  }
+
+  // The maintainer removed the plan label or closed the issue before approving.
+  closePlanTask(repo, number) {
+    this.db
+      .prepare(
+        `UPDATE tasks SET status = 'closed', claimed_by = NULL, lease_expires = NULL
+         WHERE repo = ? AND issue_number = ? AND kind = 'plan' AND status IN ('open', 'claimed', 'planned')`
+      )
+      .run(repo, number);
+  }
+
+  async submitPlan(login, taskId, subtasks) {
+    const task = this.heldBy(login, taskId);
+    if (task.kind !== 'plan') throw new TaskError('This is not a planning task.');
+    this.db
+      .prepare(`UPDATE tasks SET status = 'planned', plan = ?, author = ?, claimed_by = NULL, lease_expires = NULL WHERE id = ?`)
+      .run(JSON.stringify(subtasks), login, taskId);
+    const list = subtasks
+      .map((s, i) => `${i + 1}. **${noMentions(s.title)}**\n   ${noMentions(s.description)}\n   _Done when:_ ${noMentions(s.done_when)}`)
+      .join('\n');
+    await this.github.comment(
+      task.repo,
+      this.project(task.repo)?.installation_id,
+      task.issue_number,
+      `**Proposed plan: ${subtasks.length} tasks** (from @${login}'s agent, via Barnraise)\n\n${list}\n\n` +
+        `Maintainers: add the \`${LABEL}\` label to this issue to approve. Each task above becomes its own issue for volunteers. ` +
+        `Remove \`${PLAN_LABEL}\` to discard the plan.`
+    );
+    return this.task(taskId);
+  }
+
+  // The maintainer approved the plan: every sub-task becomes an issue and a build task.
+  async approvePlan(planTask) {
+    const { repo, issue_number: parent } = planTask;
+    const installationId = this.project(repo)?.installation_id;
+    const proposal = this.pendingProposal(repo, parent);
+    const created = [];
+    for (const s of JSON.parse(planTask.plan)) {
+      const body =
+        `${noMentions(s.description)}\n\n**Done when:** ${noMentions(s.done_when)}\n\n` +
+        `Part of #${parent}. Planned by @${planTask.author}'s agent via Barnraise.`;
+      const issue = await this.github.createIssue(repo, installationId, { title: s.title, body, labels: [LABEL] });
+      if (!issue) continue;
+      const { task } = this.openIssueTask({ repo, number: issue.number, title: s.title, body });
+      if (proposal) this.db.prepare('UPDATE tasks SET proposal_id = ? WHERE id = ?').run(proposal.id, task.id);
+      created.push(issue.number);
+    }
+    if (!created.length) return created;
+    if (proposal) this.db.prepare(`UPDATE proposals SET status = 'approved' WHERE id = ?`).run(proposal.id);
+    this.db.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(planTask.id);
+    this.db.prepare('UPDATE users SET plans = plans + 1 WHERE login = ?').run(planTask.author);
+    await this.github.comment(
+      repo,
+      installationId,
+      parent,
+      `Plan approved. Open to Barnraise volunteers: ${created.map((n) => `#${n}`).join(', ')}. This issue stays open to track them.`
+    );
+    return created;
   }
 
   // ---- proposals: volunteers vote for a feature by pledging their agent to it ----
@@ -368,13 +453,13 @@ export class Coordinator {
       tasks: this.db
         .prepare(
           `SELECT id, repo, kind, issue_number, title, status, claimed_by, author, pr_url
-           FROM tasks WHERE status IN ('open', 'claimed', 'submitted') ORDER BY id DESC LIMIT 200`
+           FROM tasks WHERE status IN ('open', 'claimed', 'submitted', 'planned') ORDER BY id DESC LIMIT 200`
         )
         .all(),
       leaderboard: this.db
         .prepare(
-          `SELECT login, merged, reviews FROM users WHERE merged + reviews > 0
-           ORDER BY merged DESC, reviews DESC, login LIMIT 50`
+          `SELECT login, merged, reviews, plans FROM users WHERE merged + reviews + plans > 0
+           ORDER BY merged DESC, reviews DESC, plans DESC, login LIMIT 50`
         )
         .all(),
       merged: this.db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE status = 'merged'`).get().n,

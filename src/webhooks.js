@@ -1,4 +1,4 @@
-import { LABEL, PROPOSAL_LABEL } from './coordinator.js';
+import { LABEL, PLAN_LABEL, PROPOSAL_LABEL } from './coordinator.js';
 
 const hasLabel = (issue, name = LABEL) => (issue.labels ?? []).some((l) => l.name === name);
 
@@ -41,7 +41,39 @@ export async function handleWebhook(coordinator, github, event, payload, publicU
       coordinator.closeProposal(repo, issue.number);
     }
 
+    const planning =
+      (payload.action === 'labeled' && payload.label?.name === PLAN_LABEL) ||
+      (['edited', 'reopened'].includes(payload.action) && hasLabel(issue, PLAN_LABEL));
+    const plan = coordinator.planTask(repo, issue.number);
+
+    if (planning && issue.state === 'open' && !hasLabel(issue)) {
+      coordinator.upsertProject(repo, installationId, await github.getConfig(repo, installationId));
+      const { created } = coordinator.openPlanTask({ repo, number: issue.number, title: issue.title, body: issue.body ?? '' });
+      if (created) {
+        await github.comment(
+          repo,
+          installationId,
+          issue.number,
+          `A [Barnraise](${publicUrl || 'https://github.com'}) volunteer's agent will propose how to split this into small tasks. ` +
+            `The plan will be posted here for you to approve before anything is built. Remove the \`${PLAN_LABEL}\` label to cancel.`
+        );
+      }
+      return;
+    }
+    if ((payload.action === 'unlabeled' && payload.label?.name === PLAN_LABEL) || payload.action === 'closed') {
+      coordinator.closePlanTask(repo, issue.number);
+    }
+
+    // This issue was already split into tasks: it is a tracker now, not work.
+    if (plan?.status === 'done') return;
+    if (opening && issue.state === 'open' && plan?.status === 'planned') {
+      coordinator.upsertProject(repo, installationId);
+      await coordinator.approvePlan(plan);
+      return;
+    }
+
     if (opening && issue.state === 'open') {
+      coordinator.closePlanTask(repo, issue.number);
       coordinator.upsertProject(repo, installationId, await github.getConfig(repo, installationId));
       const { task, created } = coordinator.openIssueTask({
         repo,

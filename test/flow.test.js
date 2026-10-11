@@ -27,6 +27,11 @@ function fakeGithub(pulls = {}) {
     async getConfig() {
       return this.config;
     },
+    issues: [],
+    async createIssue(repo, _installation, issue) {
+      const number = 100 + this.issues.push({ repo, ...issue });
+      return { number };
+    },
   };
 }
 
@@ -92,8 +97,8 @@ test('full flow: claim, submit, review, merge', async () => {
   });
   assert.equal(coordinator.task(task.id).status, 'merged');
   assert.deepEqual(coordinator.state().leaderboard.map((row) => ({ ...row })), [
-    { login: 'alice', merged: 1, reviews: 0 },
-    { login: 'bob', merged: 0, reviews: 1 },
+    { login: 'alice', merged: 1, reviews: 0, plans: 0 },
+    { login: 'bob', merged: 0, reviews: 1, plans: 0 },
   ]);
 });
 
@@ -181,7 +186,7 @@ test('an agent can work through the server over MCP', async (t) => {
   t.after(() => client.close());
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((x) => x.name).sort(), ['back_proposal', 'claim_task', 'list_proposals', 'list_tasks', 'release_task', 'submit_review', 'submit_task', 'withdraw_backing']);
+  assert.deepEqual(tools.map((x) => x.name).sort(), ['back_proposal', 'claim_task', 'list_proposals', 'list_tasks', 'release_task', 'submit_plan', 'submit_review', 'submit_task', 'withdraw_backing']);
 
   const claimed = await client.callTool({ name: 'claim_task', arguments: {} });
   const instructions = claimed.content[0].text;
@@ -312,4 +317,66 @@ test('task steps include a prefilled pull request link', async () => {
   assert.equal(link.pathname, `/${REPO}/compare/alice:barnraise/7-fix-the-thing`);
   assert.equal(link.searchParams.get('title'), 'Fix the Thing!');
   assert.match(link.searchParams.get('body'), /^Closes #7\n\nBarnraise task #1\. Written with AI assistance and checked by @alice\.$/);
+});
+
+const planLabeled = (number, title = 'Big feature') => ({
+  action: 'labeled',
+  label: { name: 'barnraise-plan' },
+  installation: { id: 7 },
+  repository: { full_name: REPO },
+  issue: { number, title, body: 'Lots to do.', state: 'open', labels: [{ name: 'barnraise-plan' }] },
+});
+
+const SUBTASKS = [
+  { title: 'Add the settings table', description: 'Create the table in src/db.js with a migration.', done_when: 'Tests cover reading and writing a setting.' },
+  { title: 'Show settings on the page', description: 'Render the values in src/pages.js. Ping @everyone.', done_when: 'The page lists every setting.' },
+];
+
+test('a big issue is planned by a volunteer and split when the maintainer approves', async () => {
+  const { coordinator, github } = setup();
+  coordinator.issueToken('alice');
+  await handleWebhook(coordinator, github, 'issues', planLabeled(60));
+  assert.equal(github.comments.length, 1);
+
+  const plan = coordinator.claim('alice');
+  assert.equal(plan.kind, 'plan');
+  await assert.rejects(coordinator.submit('alice', plan.id, `https://github.com/${REPO}/pull/1`), /not a build task/);
+  await coordinator.submitPlan('alice', plan.id, SUBTASKS);
+  assert.equal(coordinator.task(plan.id).status, 'planned');
+  assert.match(github.comments.at(-1).body, /Proposed plan: 2 tasks/);
+  assert.doesNotMatch(github.comments.at(-1).body, /@everyone/, 'volunteer text cannot ping people');
+  assert.equal(github.issues.length, 0, 'nothing is created before approval');
+
+  const approve = labeled(60, 'Big feature');
+  approve.issue.labels.push({ name: 'barnraise-plan' });
+  await handleWebhook(coordinator, github, 'issues', approve);
+  assert.deepEqual(github.issues.map((i) => i.title), SUBTASKS.map((x) => x.title));
+  assert.deepEqual(github.issues[0].labels, ['barnraise']);
+  assert.match(github.issues[0].body, /Part of #60/);
+  const open = coordinator.state().tasks;
+  assert.deepEqual(open.map((t) => [t.kind, t.issue_number]).sort(), [['build', 101], ['build', 102]]);
+  assert.match(github.comments.at(-1).body, /#101, #102/);
+  assert.equal(coordinator.state().leaderboard[0].plans, 1);
+
+  // GitHub also reports the label on each new issue, and later edits to the tracker issue.
+  await handleWebhook(coordinator, github, 'issues', labeled(101, SUBTASKS[0].title));
+  await handleWebhook(coordinator, github, 'issues', { ...approve, action: 'edited', label: undefined });
+  assert.equal(coordinator.state().tasks.length, 2, 'no duplicates and no task for the tracker issue');
+});
+
+test('a plan can be discarded, and labelling for work before a plan exists makes one normal task', async () => {
+  const { coordinator, github } = setup();
+  await handleWebhook(coordinator, github, 'issues', planLabeled(70));
+  const plan = coordinator.claim('alice');
+  await coordinator.submitPlan('alice', plan.id, SUBTASKS);
+  await handleWebhook(coordinator, github, 'issues', { ...planLabeled(70), action: 'unlabeled' });
+  assert.equal(coordinator.task(plan.id).status, 'closed');
+  assert.equal(coordinator.state().tasks.length, 0);
+
+  await handleWebhook(coordinator, github, 'issues', planLabeled(71));
+  const both = labeled(71, 'Big feature');
+  both.issue.labels.push({ name: 'barnraise-plan' });
+  await handleWebhook(coordinator, github, 'issues', both);
+  assert.deepEqual(coordinator.state().tasks.map((t) => [t.kind, t.issue_number]), [['build', 71]]);
+  assert.equal(github.issues.length, 0);
 });
