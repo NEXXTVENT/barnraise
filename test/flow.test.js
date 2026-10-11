@@ -201,6 +201,15 @@ test('an agent can work through the server over MCP', async (t) => {
   assert.match(home, /in review/);
 });
 
+test('GET /health answers ok', async (t) => {
+  const { server } = createApp({ github: fakeGithub(), publicUrl: 'http://localhost' });
+  await new Promise((r) => server.listen(0, r));
+  t.after(() => server.close());
+  const res = await fetch(`http://localhost:${server.address().port}/health`);
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'ok');
+});
+
 const proposed = (number, title = `Feature ${number}`) => ({
   action: 'labeled',
   label: { name: 'barnraise-proposal' },

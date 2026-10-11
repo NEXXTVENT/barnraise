@@ -91,6 +91,7 @@ export function createApp({ dataDir = null, dev = false, publicUrl = 'http://loc
 
     if (req.method !== 'GET') return send(res, 405, '', 'text/plain', { allow: 'GET' });
 
+    if (path === '/health') return send(res, 200, 'ok', 'text/plain');
     if (path === '/') return send(res, 200, homePage(coordinator.state()));
     if (path === '/api/state') return send(res, 200, JSON.stringify(coordinator.state()), 'application/json');
     if (path === '/terms') return send(res, 200, termsPage());
