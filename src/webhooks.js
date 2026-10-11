@@ -1,4 +1,4 @@
-import { LABEL, PLAN_LABEL, PROPOSAL_LABEL } from './coordinator.js';
+import { FIRST_LABEL, LABEL, PLAN_LABEL, PROPOSAL_LABEL } from './coordinator.js';
 
 const hasLabel = (issue, name = LABEL) => (issue.labels ?? []).some((l) => l.name === name);
 
@@ -26,7 +26,9 @@ export async function handleWebhook(coordinator, github, event, payload, publicU
     if (issue.pull_request) return;
     const opening =
       (payload.action === 'labeled' && payload.label?.name === LABEL) ||
-      (['edited', 'reopened'].includes(payload.action) && hasLabel(issue));
+      (['edited', 'reopened'].includes(payload.action) && hasLabel(issue)) ||
+      // Adding or removing "good first issue" on a task changes who can claim it.
+      (['labeled', 'unlabeled'].includes(payload.action) && payload.label?.name === FIRST_LABEL && hasLabel(issue));
     const closing = (payload.action === 'unlabeled' && payload.label?.name === LABEL) || payload.action === 'closed';
     const proposing =
       (payload.action === 'labeled' && payload.label?.name === PROPOSAL_LABEL) ||
@@ -80,6 +82,7 @@ export async function handleWebhook(coordinator, github, event, payload, publicU
         number: issue.number,
         title: issue.title,
         body: issue.body ?? '',
+        goodFirst: hasLabel(issue, FIRST_LABEL),
       });
       coordinator.approveProposal(repo, issue.number, task.id);
       if (created) {

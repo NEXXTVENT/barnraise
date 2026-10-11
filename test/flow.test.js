@@ -9,6 +9,7 @@ import { Coordinator, TaskError, parsePrUrl } from '../src/coordinator.js';
 import { parseConfig, verifySignature } from '../src/github.js';
 import { handleWebhook } from '../src/webhooks.js';
 import { createApp } from '../src/server.js';
+import { homePage } from '../src/pages.js';
 
 const REPO = 'acme/widgets';
 
@@ -42,12 +43,13 @@ function setup() {
   return { github, clock, coordinator };
 }
 
-const labeled = (number, title = `Fix thing ${number}`) => ({
+// Good first issues by default, so the brand-new volunteers in these tests can claim them.
+const labeled = (number, title = `Fix thing ${number}`, labels = ['barnraise', 'good first issue']) => ({
   action: 'labeled',
   label: { name: 'barnraise' },
   installation: { id: 7 },
   repository: { full_name: REPO },
-  issue: { number, title, body: 'It is broken.', state: 'open', labels: [{ name: 'barnraise' }] },
+  issue: { number, title, body: 'It is broken.', state: 'open', labels: labels.map((name) => ({ name })) },
 });
 
 test('labelling an issue creates one task and one comment', async () => {
@@ -97,9 +99,36 @@ test('full flow: claim, submit, review, merge', async () => {
   });
   assert.equal(coordinator.task(task.id).status, 'merged');
   assert.deepEqual(coordinator.state().leaderboard.map((row) => ({ ...row })), [
-    { login: 'alice', merged: 1, reviews: 0, plans: 0 },
-    { login: 'bob', merged: 0, reviews: 1, plans: 0 },
+    { login: 'alice', merged: 1, reviews: 0, plans: 0, tier: 'regular' },
+    { login: 'bob', merged: 0, reviews: 1, plans: 0, tier: 'newcomer' },
   ]);
+});
+
+test('newcomers only get good first issues until a pull request of theirs is merged', async () => {
+  const { coordinator, github } = setup();
+  coordinator.issueToken('alice');
+  await handleWebhook(coordinator, github, 'issues', labeled(1, 'Hard thing', ['barnraise']));
+  assert.throws(() => coordinator.claim('alice'), /good first issue/, 'a newcomer cannot take an ordinary task');
+
+  await handleWebhook(coordinator, github, 'issues', labeled(2, 'Easy thing'));
+  const easy = coordinator.claim('alice');
+  assert.equal(easy.issue_number, 2);
+  github.pulls[`${REPO}#10`] = { state: 'open', user: { login: 'alice' }, html_url: `https://github.com/${REPO}/pull/10` };
+  await coordinator.submit('alice', easy.id, `https://github.com/${REPO}/pull/10`);
+  assert.equal(coordinator.claimable('alice', { kind: 'build' }).length, 0, 'still a newcomer while the pull request is open');
+
+  coordinator.onPullClosed(REPO, 10, true);
+  assert.equal(coordinator.tier('alice'), 'regular');
+  assert.equal(coordinator.claim('alice').issue_number, 1, 'after one merge any task is open');
+  assert.match(homePage(coordinator.state()), /alice<\/td><td><span class="pill">regular/);
+
+  // The maintainer can add the label to an existing task to open it to newcomers.
+  coordinator.release('alice', coordinator.claim('alice').id);
+  assert.equal(coordinator.claimable('bob', { kind: 'build' }).length, 0);
+  const relabel = { ...labeled(1, 'Hard thing'), label: { name: 'good first issue' } };
+  await handleWebhook(coordinator, github, 'issues', relabel);
+  assert.equal(coordinator.claimable('bob', { kind: 'build' }).length, 1);
+  assert.equal(coordinator.state().tasks.filter((t) => t.kind === 'build').length, 1, 'relabelling does not duplicate the task');
 });
 
 test('a pull request from another account or repo is rejected', async () => {

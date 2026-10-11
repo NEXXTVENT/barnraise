@@ -54,6 +54,7 @@ export function openDb(path = ':memory:') {
     'ALTER TABLE tasks ADD COLUMN proposal_id INTEGER',
     'ALTER TABLE tasks ADD COLUMN plan TEXT',
     'ALTER TABLE users ADD COLUMN plans INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE tasks ADD COLUMN good_first INTEGER NOT NULL DEFAULT 0',
   ]) {
     try {
       db.exec(ddl);
