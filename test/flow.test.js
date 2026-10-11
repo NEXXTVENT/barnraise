@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { openDb } from '../src/db.js';
@@ -208,6 +209,16 @@ test('GET /health answers ok', async (t) => {
   const res = await fetch(`http://localhost:${server.address().port}/health`);
   assert.equal(res.status, 200);
   assert.equal(await res.text(), 'ok');
+});
+
+test('GET /api/version reports the package version', async (t) => {
+  const { server } = createApp({ github: fakeGithub(), publicUrl: 'http://localhost' });
+  await new Promise((r) => server.listen(0, r));
+  t.after(() => server.close());
+  const res = await fetch(`http://localhost:${server.address().port}/api/version`);
+  assert.equal(res.status, 200);
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.deepEqual(await res.json(), { version });
 });
 
 const proposed = (number, title = `Feature ${number}`) => ({

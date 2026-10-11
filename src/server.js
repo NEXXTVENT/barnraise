@@ -12,6 +12,7 @@ import { buildMcpServer } from './mcp.js';
 import { connectedPage, homePage, joinPage, maintainersPage, messagePage, setupPage, termsPage } from './pages.js';
 
 const MAX_BODY = 1024 * 1024;
+const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 function readBody(req) {
   return new Promise((resolveBody, reject) => {
@@ -94,6 +95,7 @@ export function createApp({ dataDir = null, dev = false, publicUrl = 'http://loc
     if (path === '/health') return send(res, 200, 'ok', 'text/plain');
     if (path === '/') return send(res, 200, homePage(coordinator.state()));
     if (path === '/api/state') return send(res, 200, JSON.stringify(coordinator.state()), 'application/json');
+    if (path === '/api/version') return send(res, 200, JSON.stringify({ version }), 'application/json');
     if (path === '/terms') return send(res, 200, termsPage());
     if (path === '/maintainers') return send(res, 200, maintainersPage({ appSlug: app?.slug }));
     if (path === '/join') return send(res, 200, joinPage({ dev: dev && !app }));
